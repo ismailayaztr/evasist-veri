@@ -1,0 +1,47 @@
+name: EPDK istasyon verisi
+
+on:
+  schedule:
+    - cron: "17 1 * * *"   # her gece 04:17 (Türkiye saati)
+  workflow_dispatch:        # Actions sekmesinden elle çalıştırma
+
+permissions:
+  contents: write   # docs/ klasörünü depoya kaydetmek için
+  pages: write      # GitHub Pages'e yayınlamak için
+  id-token: write
+
+concurrency:
+  group: epdk-istasyon
+  cancel-in-progress: false
+
+jobs:
+  yayinla:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: EPDK'dan çek ve docs/stations.json yaz
+        run: python3 scripts/epdk_to_json.py --out docs
+
+      - name: Değiştiyse depoya kaydet
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          if git diff --cached --quiet; then
+            echo "Değişiklik yok"
+          else
+            git commit -m "EPDK istasyon verisi $(date -u +%F)"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
