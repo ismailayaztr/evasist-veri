@@ -1,0 +1,81 @@
+name: OSM istasyon olanakları
+
+# Ayda bir: Türkiye OpenStreetMap özetini indirir, her şarj istasyonunun 300 m
+# çevresindeki olanakları (WC, kafe, market…), zincir markaları (Starbucks, Migros…)
+# ve tesis tipini (AVM, dinlenme tesisi…) hesaplar, docs/amenities.json olarak yayınlar.
+# Veri © OpenStreetMap katkıda bulunanlar, ODbL 1.0.
+
+on:
+  schedule:
+    - cron: "43 2 3 * *"   # her ayın 3'ü, 05:43 (Türkiye saati)
+  workflow_dispatch:        # Actions sekmesinden elle çalıştırma
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: epdk-istasyon      # EPDK işiyle aynı anda yayın yapmasın
+  cancel-in-progress: false
+
+jobs:
+  olanaklar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Araçları kur
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osmium-tool
+          pip install -q osmium
+
+      - name: Türkiye OSM özetini indir (Geofabrik)
+        run: |
+          curl -fL --retry 3 -o turkey.osm.pbf \
+            -A "EVAsistBot/1.0 (+https://www.evasist.com)" \
+            https://download.geofabrik.de/europe/turkey-latest.osm.pbf
+          ls -lh turkey.osm.pbf
+
+      - name: Gerekli etiketleri süz
+        run: |
+          osmium tags-filter turkey.osm.pbf \
+            nwr/amenity=toilets,place_of_worship,cafe,restaurant,food_court,fast_food,fuel,parking,car_wash,pharmacy,atm,bank,hospital,university,college,ice_cream \
+            nwr/shop=supermarket,convenience,mall,tyres,car,coffee,bakery,pastry,department_store \
+            nwr/tourism=hotel,motel \
+            nwr/highway=services,rest_area \
+            nwr/leisure=playground \
+            -o filtered.osm.pbf --overwrite
+          ls -lh filtered.osm.pbf
+
+      - name: İstasyon çevrelerini hesapla
+        run: python3 scripts/osm_amenities.py --pbf filtered.osm.pbf --stations docs/stations.json --out docs/amenities.json
+
+      - name: Değiştiyse depoya kaydet
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/amenities.json
+          if git diff --cached --quiet; then
+            echo "Değişiklik yok"
+          else
+            git commit -m "OSM istasyon olanakları $(date -u +%F)"
+            git pull --rebase --quiet
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
